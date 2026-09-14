@@ -13,6 +13,8 @@
 
 const EXT_NAME = '悬浮窗管理中心';
 const LS_KEY = 'fwh_state_v1';
+// 每次修改默认行为/存储结构时递增，用于识别旧 localStorage 残留并做兼容修正
+const VERSION = '1.12.0';
 
 // ---------------------------------------------------------------------------
 // 默认设置
@@ -59,6 +61,7 @@ const inlinePreserved = new WeakMap();
 // ---------------------------------------------------------------------------
 let settings;
 let panelEl, bubbleEl, listEl, listMetaEl;
+let rootNodes = []; // buildDOM 追加到 body 的根节点，用于被 SPA 清空后自动重新挂载
 let isPanelOpen = false;
 // 记录被"进入/呼出"的第三方悬浮窗的原样式，便于隐藏/还原时恢复
 const winOverrides = new Map();
@@ -90,12 +93,20 @@ function loadSettings() {
     settings.bubble = Object.assign({}, DEFAULTS.bubble, src.bubble || {});
     settings.panel = Object.assign({}, DEFAULTS.panel, src.panel || {});
     settings.options = Object.assign({}, DEFAULTS.options, src.options || {});
+    // 版本门控：旧版 localStorage 可能残留 bubble.hidden=true(用户以前点过「隐藏悬浮球」)，
+    // 手机端又没有可用的双击恢复入口，导致重新导入后悬浮球凭空消失、无法使用。
+    // 存储版本不一致时强制恢复悬浮球显示。
+    if (src.v !== VERSION) {
+      settings.bubble.hidden = false;
+      settings.bubble.cx = DEFAULTS.bubble.cx;
+      settings.bubble.cy = DEFAULTS.bubble.cy;
+    }
   }
 }
 
 function saveSettings() {
   try {
-    localStorage.setItem(LS_KEY, JSON.stringify(settings));
+    localStorage.setItem(LS_KEY, JSON.stringify(Object.assign({ v: VERSION }, settings)));
   } catch (e) {
     /* 忽略 storage 异常(隐私模式等) */
   }
@@ -1365,6 +1376,7 @@ function buildDOM() {
   ]);
 
   document.body.append(overlay, bubbleEl, panelEl, scanLayer, dialogWrap, quickMenu);
+  rootNodes = [overlay, bubbleEl, panelEl, scanLayer, dialogWrap, quickMenu];
 
   listEl = document.getElementById('fwh-list');
   listMetaEl = document.getElementById('fwh-meta-total');
@@ -1553,13 +1565,40 @@ function closeQuickMenu() {
 // 恢复被最小化的悬浮球:双击页面空白
 // ---------------------------------------------------------------------------
 function setupRestore() {
+  const restore = () => {
+    if (!settings.bubble.hidden) return;
+    settings.bubble.hidden = false;
+    applyBubbleStyle();
+    saveSettings();
+    shortToast('悬浮球已恢复显示');
+  };
+  // 桌面端：双击空白处恢复
   document.addEventListener('dblclick', (e) => {
-    if (settings.bubble.hidden && !e.target.closest('.fwh-root')) {
-      settings.bubble.hidden = false;
-      applyBubbleStyle();
-      saveSettings();
-    }
+    if (!e.target.closest('.fwh-root')) restore();
   });
+  // 移动端：WebView 常不派发 dblclick，改用长按屏幕(约 1.2s)恢复悬浮球
+  let timer = null;
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  document.addEventListener('touchstart', (e) => {
+    if (e.target.closest && e.target.closest('.fwh-root')) return;
+    cancel();
+    timer = setTimeout(restore, 1200);
+  }, { passive: true });
+  document.addEventListener('touchmove', cancel, { passive: true });
+  document.addEventListener('touchend', cancel);
+  document.addEventListener('touchcancel', cancel);
+}
+
+// 被酒馆 SPA 清空 body 后自动重新挂载本插件根节点，避免悬浮球/面板消失
+function setupKeepAlive() {
+  setInterval(() => {
+    if (!document.body) return;
+    let reattached = false;
+    rootNodes.forEach((n) => {
+      if (n && !n.isConnected) { document.body.appendChild(n); reattached = true; }
+    });
+    if (reattached) applyBubbleStyle();
+  }, 2000);
 }
 
 // ---------------------------------------------------------------------------
@@ -1579,6 +1618,7 @@ function setupRestore() {
     settings.windows.forEach((w) => applyWindowState(w));
     setupGuard();
     setupRestore();
+    setupKeepAlive();
   };
 
   if (document.readyState === 'loading') {
