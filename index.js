@@ -14,16 +14,16 @@
 const EXT_NAME = '悬浮窗管理中心';
 const LS_KEY = 'fwh_state_v1';
 // 每次修改默认行为/存储结构时递增，用于识别旧 localStorage 残留并做兼容修正
-const VERSION = '1.12.0';
+const VERSION = '1.14.0';
 
 // ---------------------------------------------------------------------------
 // 默认设置
 // ---------------------------------------------------------------------------
 const DEFAULTS = {
   bubble: {
-    // (cx, cy) 为占视口宽高比例(0~1)，0 表示使用默认位置(右下)
-    cx: 0.92,
-    cy: 0.88,
+    // (x, y) 为悬浮球左上角像素坐标；null 表示尚未定位，将在运行时用视口右下角默认位置
+    x: null,
+    y: null,
     hidden: false,
   },
   // 已注册悬浮窗列表
@@ -98,8 +98,8 @@ function loadSettings() {
     // 存储版本不一致时强制恢复悬浮球显示。
     if (src.v !== VERSION) {
       settings.bubble.hidden = false;
-      settings.bubble.cx = DEFAULTS.bubble.cx;
-      settings.bubble.cy = DEFAULTS.bubble.cy;
+      settings.bubble.x = null;
+      settings.bubble.y = null;
     }
   }
 }
@@ -899,10 +899,17 @@ function commitEditDialog() {
 // ---------------------------------------------------------------------------
 function applyBubbleStyle() {
   if (!bubbleEl) return;
-  // 将比例位置转成像素
-  bubbleEl.style.left = `${settings.bubble.cx * 100}%`;
-  bubbleEl.style.top = `${settings.bubble.cy * 100}%`;
-  bubbleEl.style.transform = 'translate(-50%, -50%)';
+  const size = bubbleEl.offsetWidth || 56;
+  let x = settings.bubble.x;
+  let y = settings.bubble.y;
+  // 未定位(旧数据/null)时用右下角默认位置，避免悬浮球落到屏幕最上方
+  if (typeof x !== 'number' || !isFinite(x)) x = window.innerWidth - size - 16;
+  if (typeof y !== 'number' || !isFinite(y)) y = window.innerHeight - size - 90;
+  settings.bubble.x = clamp(x, 0, Math.max(0, window.innerWidth - size));
+  settings.bubble.y = clamp(y, 0, Math.max(0, window.innerHeight - size));
+  bubbleEl.style.left = settings.bubble.x + 'px';
+  bubbleEl.style.top = settings.bubble.y + 'px';
+  bubbleEl.style.transform = 'none';
   bubbleEl.classList.toggle('is-hidden', !!settings.bubble.hidden);
   if (settings.bubble.hidden) bubbleEl.classList.add('fwh-bubble-min');
 }
@@ -944,12 +951,16 @@ function setupPanelDrag() {
   const head = panelEl.querySelector('.fwh-panel-head');
   const hasPointer = typeof PointerEvent === 'function';
   let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0, moved = false;
+  let pointerId = null;
 
   const readPos = (e) => (e.touches && e.touches.length ? e.touches[0] : e);
 
   const down = (e) => {
     if (e.target.closest('.fwh-close')) return; // 不拦截关闭按钮
+    e.preventDefault();
+    e.stopPropagation();
     dragging = true; moved = false;
+    pointerId = e.pointerId != null ? e.pointerId : null;
     const p = readPos(e);
     const r = panelEl.getBoundingClientRect();
     sx = p.clientX; sy = p.clientY;
@@ -962,11 +973,12 @@ function setupPanelDrag() {
     panelEl.style.right = '';
     panelEl.style.bottom = '';
     panelEl.style.maxHeight = 'none';
-    if (e.pointerId != null) { try { head.setPointerCapture(e.pointerId); } catch (e) {} }
+    if (pointerId != null) { try { head.setPointerCapture(pointerId); } catch (e) {} }
     head.classList.add('dragging');
   };
   const move = (e) => {
     if (!dragging) return;
+    if (pointerId != null && e.pointerId != null && e.pointerId !== pointerId) return;
     const p = readPos(e);
     const dx = p.clientX - sx, dy = p.clientY - sy;
     if (!moved && Math.hypot(dx, dy) > 4) moved = true;
@@ -982,8 +994,8 @@ function setupPanelDrag() {
   const up = (e) => {
     if (!dragging) return;
     dragging = false; moved = false;
+    if (pointerId != null) { try { head.releasePointerCapture(pointerId); } catch (e) {} }
     head.classList.remove('dragging');
-    if (e && e.pointerId != null) { try { head.releasePointerCapture(e.pointerId); } catch (e) {} }
     if (settings.panel.positioned) saveSettings();
   };
 
@@ -1008,11 +1020,15 @@ function setupResize() {
   if (!handle) return;
   const hasPointer = typeof PointerEvent === 'function';
   let dragging = false, sx = 0, sy = 0, sw = 0, sh = 0;
+  let pointerId = null;
 
   const readPos = (e) => (e.touches && e.touches.length ? e.touches[0] : e);
 
   const down = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     dragging = true;
+    pointerId = e.pointerId != null ? e.pointerId : null;
     const p = readPos(e);
     sx = p.clientX; sy = p.clientY;
     sw = panelEl.offsetWidth; sh = panelEl.offsetHeight;
@@ -1020,12 +1036,12 @@ function setupResize() {
     settings.panel.x = r.left;
     settings.panel.y = r.top;
     settings.panel.positioned = true;
-    if (e.pointerId != null) { try { handle.setPointerCapture(e.pointerId); } catch (e) {} }
-    e.stopPropagation();
+    if (pointerId != null) { try { handle.setPointerCapture(pointerId); } catch (e) {} }
     handle.classList.add('resizing');
   };
   const move = (e) => {
     if (!dragging) return;
+    if (pointerId != null && e.pointerId != null && e.pointerId !== pointerId) return;
     const p = readPos(e);
     const w = clamp(sw + (p.clientX - sx), 300, window.innerWidth - 8);
     const h = clamp(sh + (p.clientY - sy), 320, window.innerHeight - 56);
@@ -1038,7 +1054,7 @@ function setupResize() {
     if (!dragging) return;
     dragging = false;
     handle.classList.remove('resizing');
-    if (e && e.pointerId != null) { try { handle.releasePointerCapture(e.pointerId); } catch (e) {} }
+    if (pointerId != null) { try { handle.releasePointerCapture(pointerId); } catch (e) {} }
     saveSettings();
   };
 
@@ -1057,56 +1073,58 @@ function setupResize() {
 function setupDrag() {
   const hasPointer = typeof PointerEvent === 'function';
   let sx = 0, sy = 0, ox = 0, oy = 0, dragging = false, moved = false;
+  let pointerId = null;
   let lastTapAt = 0; // 已由 pointer/touch 处理的轻触时间，避免 click 二次触发
 
   // 统一取坐标：PointerEvent 直接取，TouchEvent 取首个触点(旧安卓/iOS 无 PointerEvent)
   const readPos = (e) => (e.touches && e.touches.length ? e.touches[0] : e);
 
   const onStart = (e) => {
+    // 安卓默认手势(滚动/缩放)会抢走触摸导致拖不动；参考泉此方：pointerdown 必须
+    // preventDefault + stopPropagation，否则浏览器触发 pointercancel 中断拖拽。
+    e.preventDefault();
+    e.stopPropagation();
     dragging = true;
     moved = false;
+    pointerId = e.pointerId != null ? e.pointerId : null;
     const p = readPos(e);
-    sx = p.clientX; sy = p.clientY;
     const rect = bubbleEl.getBoundingClientRect();
-    ox = p.clientX - rect.left - rect.width / 2;
-    oy = p.clientY - rect.top - rect.height / 2;
+    sx = p.clientX; sy = p.clientY;
+    ox = p.clientX - rect.left;
+    oy = p.clientY - rect.top;
     bubbleEl.classList.add('dragging');
-    if (e.pointerId != null) { try { bubbleEl.setPointerCapture(e.pointerId); } catch (e) {} }
+    if (pointerId != null) { try { bubbleEl.setPointerCapture(pointerId); } catch (e) {} }
   };
 
   const onMove = (e) => {
     if (!dragging) return;
+    if (pointerId != null && e.pointerId != null && e.pointerId !== pointerId) return;
     const p = readPos(e);
     const dx = p.clientX - sx, dy = p.clientY - sy;
     if (!moved && Math.hypot(dx, dy) > 6) moved = true;
     if (!moved) return;
-    const left = p.clientX - ox;
-    const top = p.clientY - oy;
-    const cx = Math.min(Math.max(left + bubbleEl.offsetWidth / 2, 0), window.innerWidth);
-    const cy = Math.min(Math.max(top + bubbleEl.offsetHeight / 2, 0), window.innerHeight);
-    bubbleEl.style.left = `${(cx / window.innerWidth) * 100}%`;
-    bubbleEl.style.top = `${(cy / window.innerHeight) * 100}%`;
-    bubbleEl.style.transform = 'translate(-50%, -50%)';
+    const size = bubbleEl.offsetWidth || 56;
+    const x = clamp(p.clientX - ox, 0, window.innerWidth - size);
+    const y = clamp(p.clientY - oy, 0, window.innerHeight - size);
+    settings.bubble.x = x;
+    settings.bubble.y = y;
+    bubbleEl.style.left = x + 'px';
+    bubbleEl.style.top = y + 'px';
+    bubbleEl.style.transform = 'none';
   };
 
   const onEnd = (e) => {
     if (!dragging) return;
     dragging = false;
     bubbleEl.classList.remove('dragging');
-    if (e && e.pointerId != null) { try { bubbleEl.releasePointerCapture(e.pointerId); } catch (e) {} }
-    // 边缘吸附
-    if (settings.options.snapEdges) {
-      const rect = bubbleEl.getBoundingClientRect();
-      const centerX = rect.left + rect.width / 2;
-      const targetCx = centerX < window.innerWidth / 2 ? 0 : 1;
-      const margin = 0.045;
-      settings.bubble.cx = targetCx === 0 ? 0 + margin : targetCx - margin;
-      settings.bubble.cy = (rect.top + rect.height / 2) / window.innerHeight;
-      applyBubbleStyle();
-    } else {
-      const rect = bubbleEl.getBoundingClientRect();
-      settings.bubble.cx = (rect.left + rect.width / 2) / window.innerWidth;
-      settings.bubble.cy = (rect.top + rect.height / 2) / window.innerHeight;
+    if (pointerId != null) { try { bubbleEl.releasePointerCapture(pointerId); } catch (e) {} }
+    if (e && e.pointerId != null && pointerId != null && e.pointerId !== pointerId) return;
+    // 边缘吸附：水平吸到左右边缘，纵向保持用户拖到的位置
+    if (settings.options.snapEdges && moved) {
+      const size = bubbleEl.offsetWidth || 56;
+      const x = (typeof settings.bubble.x === 'number' && isFinite(settings.bubble.x)) ? settings.bubble.x : 0;
+      settings.bubble.x = (x + size / 2 < window.innerWidth / 2) ? 4 : window.innerWidth - size - 4;
+      bubbleEl.style.left = settings.bubble.x + 'px';
     }
     saveSettings();
     // 轻触未拖动 → 直接切换面板(移动端 WebView 常不派发 click，这里兜底)
