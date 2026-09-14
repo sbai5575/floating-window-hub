@@ -63,6 +63,7 @@ let settings;
 let panelEl, bubbleEl, listEl, listMetaEl;
 let rootNodes = []; // buildDOM 追加到 body 的根节点，用于被 SPA 清空后自动重新挂载
 let isPanelOpen = false;
+let panelOpenedAt = 0; // 面板最近一次打开的时刻，用于拦截同一手势派生的冗余关闭
 // 记录被"进入/呼出"的第三方悬浮窗的原样式，便于隐藏/还原时恢复
 const winOverrides = new Map();
 const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
@@ -1153,6 +1154,7 @@ function setupDrag() {
     e.stopPropagation();
     if (moved) return;                        // 拖拽后不触发
     if (Date.now() - lastTapAt < 800) return; // 已被 pointer/touch 处理过
+    lastTapAt = Date.now();                   // 自守卫：移动端 click 可能重复派发，防止 open↔close 连闪
     togglePanel();
   });
 
@@ -1182,6 +1184,7 @@ function togglePanel() {
 function openPanel() {
   if (isPanelOpen) return;
   isPanelOpen = true;
+  panelOpenedAt = Date.now();
   applyPanelGeometry(); // 恢复用户保存的位置/大小
   refreshMeta();
   renderList();
@@ -1202,6 +1205,9 @@ function openPanel() {
 
 function closePanel() {
   if (!isPanelOpen) return;
+  // 移动端同一手势可能派生多次合成 click/pointer 事件，导致「打开后立刻被关掉」的闪烁。
+  // 打开后 350ms 内的关闭请求视为误触，直接忽略。
+  if (Date.now() - panelOpenedAt < 350) return;
   isPanelOpen = false;
   document.getElementById('fwh-overlay').classList.remove('show');
   panelEl.classList.remove('open');
