@@ -1283,7 +1283,6 @@ function shortToast(msg) {
 function buildDOM() {
   // 遮罩
   const overlay = el('div', { class: 'fwh-overlay', id: 'fwh-overlay' });
-  overlay.addEventListener('click', closePanel);
 
   // 悬浮球
   bubbleEl = el('div', { class: 'fwh-root fwh-bubble', id: 'fwh-bubble' }, [
@@ -1512,7 +1511,15 @@ function bindEvents() {
     if (!e.target.closest('#fwh-quickmenu')) closeQuickMenu();
   });
 
-  // 点击面板外部时收起(已在遮罩处理)
+  // 点击面板/悬浮球/快捷菜单之外时收起。改用 pointerdown 而非遮罩的 click：
+  // 打开面板的这次触摸会在浏览器合成 click 时落在刚显示的遮罩上，立刻触发 closePanel
+  // 造成「面板闪烁后消失」。pointerdown 发生在 openPanel 之前，天然不会误关。
+  document.addEventListener('pointerdown', (e) => {
+    if (!isPanelOpen) return;
+    const t = e.target;
+    if (t && t.closest && (t.closest('.fwh-panel') || t.closest('.fwh-bubble') || t.closest('#fwh-quickmenu'))) return;
+    closePanel();
+  });
 
   setupDrag();
   setupPanelDrag();   // 面板头部拖动
@@ -1610,28 +1617,15 @@ function closeQuickMenu() {
 // 恢复被最小化的悬浮球:双击页面空白
 // ---------------------------------------------------------------------------
 function setupRestore() {
-  const restore = () => {
+  // 桌面端：双击空白处恢复（右键菜单/悬浮球隐藏后唯一入口；移动端不提供长按恢复）
+  document.addEventListener('dblclick', (e) => {
     if (!settings.bubble.hidden) return;
+    if (e.target.closest && e.target.closest('.fwh-root')) return;
     settings.bubble.hidden = false;
     applyBubbleStyle();
     saveSettings();
     shortToast('悬浮球已恢复显示');
-  };
-  // 桌面端：双击空白处恢复
-  document.addEventListener('dblclick', (e) => {
-    if (!e.target.closest('.fwh-root')) restore();
   });
-  // 移动端：WebView 常不派发 dblclick，改用长按屏幕(约 1.2s)恢复悬浮球
-  let timer = null;
-  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
-  document.addEventListener('touchstart', (e) => {
-    if (e.target.closest && e.target.closest('.fwh-root')) return;
-    cancel();
-    timer = setTimeout(restore, 1200);
-  }, { passive: true });
-  document.addEventListener('touchmove', cancel, { passive: true });
-  document.addEventListener('touchend', cancel);
-  document.addEventListener('touchcancel', cancel);
 }
 
 // 被酒馆 SPA 清空 body 后自动重新挂载本插件根节点，避免悬浮球/面板消失
