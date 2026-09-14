@@ -942,6 +942,7 @@ function applyPanelGeometry() {
 // ── 面板：拖动头部移动 ──────────────────────────────────────────
 function setupPanelDrag() {
   const head = panelEl.querySelector('.fwh-panel-head');
+  const hasPointer = typeof PointerEvent === 'function';
   let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0, moved = false;
 
   const readPos = (e) => (e.touches && e.touches.length ? e.touches[0] : e);
@@ -987,53 +988,74 @@ function setupPanelDrag() {
   };
 
   head.addEventListener('pointerdown', down);
-  head.addEventListener('touchstart', down, { passive: true });
   head.addEventListener('pointermove', move);
-  head.addEventListener('touchmove', move, { passive: true });
   head.addEventListener('pointerup', up);
   head.addEventListener('pointercancel', up);
-  head.addEventListener('touchend', up);
-  head.addEventListener('touchcancel', up);
+
+  // 仅旧设备(无 PointerEvent)才用 touch 回退；现代安卓 Chrome/Edge 会同时派发 pointer 与 touch，
+  // 二者都绑定会重复触发 down/up(点击面板闪烁后消失、无法拖动)
+  if (!hasPointer) {
+    head.addEventListener('touchstart', down, { passive: true });
+    head.addEventListener('touchmove', move, { passive: true });
+    head.addEventListener('touchend', up);
+    head.addEventListener('touchcancel', up);
+  }
 }
 
 // ── 面板：右下角缩放 ────────────────────────────────────────────
 function setupResize() {
   const handle = panelEl.querySelector('.fwh-resize');
   if (!handle) return;
+  const hasPointer = typeof PointerEvent === 'function';
   let dragging = false, sx = 0, sy = 0, sw = 0, sh = 0;
 
-  handle.addEventListener('pointerdown', (e) => {
+  const readPos = (e) => (e.touches && e.touches.length ? e.touches[0] : e);
+
+  const down = (e) => {
     dragging = true;
-    sx = e.clientX; sy = e.clientY;
+    const p = readPos(e);
+    sx = p.clientX; sy = p.clientY;
     sw = panelEl.offsetWidth; sh = panelEl.offsetHeight;
     const r = panelEl.getBoundingClientRect();
     settings.panel.x = r.left;
     settings.panel.y = r.top;
     settings.panel.positioned = true;
-    try { handle.setPointerCapture(e.pointerId); } catch (e) {}
+    if (e.pointerId != null) { try { handle.setPointerCapture(e.pointerId); } catch (e) {} }
     e.stopPropagation();
     handle.classList.add('resizing');
-  });
-  handle.addEventListener('pointermove', (e) => {
+  };
+  const move = (e) => {
     if (!dragging) return;
-    const w = clamp(sw + (e.clientX - sx), 300, window.innerWidth - 8);
-    const h = clamp(sh + (e.clientY - sy), 320, window.innerHeight - 56);
+    const p = readPos(e);
+    const w = clamp(sw + (p.clientX - sx), 300, window.innerWidth - 8);
+    const h = clamp(sh + (p.clientY - sy), 320, window.innerHeight - 56);
     settings.panel.w = w; settings.panel.h = h;
     panelEl.style.width = w + 'px';
     panelEl.style.height = h + 'px';
     panelEl.style.maxHeight = 'none';
-  });
+  };
   const up = (e) => {
     if (!dragging) return;
     dragging = false;
     handle.classList.remove('resizing');
+    if (e && e.pointerId != null) { try { handle.releasePointerCapture(e.pointerId); } catch (e) {} }
     saveSettings();
   };
+
+  handle.addEventListener('pointerdown', down);
+  handle.addEventListener('pointermove', move);
   handle.addEventListener('pointerup', up);
   handle.addEventListener('pointercancel', up);
+  if (!hasPointer) {
+    handle.addEventListener('touchstart', down, { passive: true });
+    handle.addEventListener('touchmove', move, { passive: true });
+    handle.addEventListener('touchend', up);
+    handle.addEventListener('touchcancel', up);
+  }
 }
 
 function setupDrag() {
+  const hasPointer = typeof PointerEvent === 'function';
   let sx = 0, sy = 0, ox = 0, oy = 0, dragging = false, moved = false;
   let lastTapAt = 0; // 已由 pointer/touch 处理的轻触时间，避免 click 二次触发
 
@@ -1095,13 +1117,18 @@ function setupDrag() {
   };
 
   bubbleEl.addEventListener('pointerdown', onStart);
-  bubbleEl.addEventListener('touchstart', onStart, { passive: true });
   bubbleEl.addEventListener('pointermove', onMove);
-  bubbleEl.addEventListener('touchmove', onMove, { passive: true });
   bubbleEl.addEventListener('pointerup', onEnd);
   bubbleEl.addEventListener('pointercancel', onEnd);
-  bubbleEl.addEventListener('touchend', onEnd);
-  bubbleEl.addEventListener('touchcancel', onEnd);
+
+  // 仅旧设备(无 PointerEvent)才用 touch 回退；现代安卓 Chrome/Edge 同时派发 pointer 与 touch，
+  // 双重绑定会让 onEnd 触发两次 togglePanel(点击后界面闪烁又消失)且拖动状态被反复重置
+  if (!hasPointer) {
+    bubbleEl.addEventListener('touchstart', onStart, { passive: true });
+    bubbleEl.addEventListener('touchmove', onMove, { passive: true });
+    bubbleEl.addEventListener('touchend', onEnd);
+    bubbleEl.addEventListener('touchcancel', onEnd);
+  }
 
   // 桌面/部分浏览器的 click 兜底(若已被 pointer/touch 处理则忽略，避免重复开关)
   bubbleEl.addEventListener('click', (e) => {
