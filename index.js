@@ -14,7 +14,7 @@
 const EXT_NAME = '悬浮窗管理中心';
 const LS_KEY = 'fwh_state_v1';
 // 每次修改默认行为/存储结构时递增，用于识别旧 localStorage 残留并做兼容修正
-const VERSION = '1.24.0';
+const VERSION = '1.25.0';
 
 // ---------------------------------------------------------------------------
 // 默认设置
@@ -195,10 +195,12 @@ function applyWindowState(win, silent) {
     }
     if (state === 'closed' || state === 'hidden') {
       hiddenLock.set(t, state);
+      lockedElements.add(t);
       applyHideStyles(t, state);
     } else {
       // open：精确还原原始内联样式，只移除我们加的内联覆盖
       hiddenLock.delete(t);
+      lockedElements.delete(t);
       t.classList.remove(HIDE_CLASS, GHOST_CLASS);
       const o = inlinePreserved.get(t) || { display: '', visibility: '', opacity: '', pointerEvents: '', animation: '', transition: '' };
       t.style.display = o.display;
@@ -211,6 +213,7 @@ function applyWindowState(win, silent) {
     }
   });
   initHideGuard();
+  startGuard(); // 有窗口进入隐藏/关闭态时确保守护轮询在跑(无待守护项时它会自动停表)
   return true;
 }
 
@@ -218,38 +221,60 @@ function applyWindowState(win, silent) {
 // 隐藏守护：部分脚本(如宝可梦论坛 ces)会周期性用 inline !important 重新 show 自己的
 // 悬浮球，导致收纳后图标"一闪一闪"。这里监听已隐藏元素的 style/class 被外部改写，
 // 立即(同一微任务、尚未绘制前)补回隐藏态，从视觉上彻底消除闪烁。
+//
+// ⚠ 关键：必须只观察"我们自己锁住的少数几个元素"，绝不能 observe(document.documentElement,{subtree:true})。
+// 酒馆是高频改 DOM 的 SPA，全文档属性观察会把每帧成百上千条 style/class 变更记录同步推给主线程；
+// 安卓低端内核(QQ 浏览器 X5 / 旧 WebView)扛不住，直接渲染进程被杀 → 整页黑屏且无法触摸。
+// 参考实现「🎈悬浮球收纳」也是用 observe(单个弹层元素) 而非观察整篇文档。
 // ---------------------------------------------------------------------------
-const hiddenLock = new WeakMap(); // element -> 'hidden' | 'closed'
+const hiddenLock = new WeakMap();    // element -> 'hidden' | 'closed'
+const lockedElements = new Set();    // 可枚举的锁定元素集合(WeakMap 无法遍历)，用于重建观察目标
 let hideGuardObserver = null;
 let hideGuardApplying = false;
 
+function onHideGuardRecords(records) {
+  if (hideGuardApplying) return;
+  const targets = new Set();
+  for (const r of records) {
+    const t = r.target;
+    if (t && t.nodeType === 1 && hiddenLock.has(t)) targets.add(t);
+  }
+  if (!targets.size) return;
+  hideGuardApplying = true;
+  try {
+    targets.forEach((t) => {
+      if (!t.isConnected) { hiddenLock.delete(t); lockedElements.delete(t); return; }
+      applyHideStyles(t, hiddenLock.get(t));
+    });
+  } finally {
+    hideGuardApplying = false;
+  }
+}
+
+// 重建观察目标：只盯住 lockedElements 里的元素，元素数量与"已收纳几个悬浮窗"相关，
+// 与页面总 DOM 规模无关，因此开销恒定且极小。
+function syncHideGuard() {
+  if (typeof MutationObserver === 'undefined') return;
+  if (!hideGuardObserver) hideGuardObserver = new MutationObserver(onHideGuardRecords);
+  hideGuardObserver.disconnect();
+  lockedElements.forEach((t) => {
+    if (t.isConnected) {
+      hideGuardObserver.observe(t, { attributes: true, attributeFilter: ['style', 'class'] });
+    } else {
+      hiddenLock.delete(t);
+      lockedElements.delete(t);
+    }
+  });
+}
+
+// 合并同一 tick 内的多次调用，避免逐个元素重复 disconnect/observe
+let hideGuardSyncTimer = null;
 function initHideGuard() {
-  if (hideGuardObserver || typeof MutationObserver === 'undefined') return;
-  hideGuardObserver = new MutationObserver((records) => {
-    if (hideGuardApplying) return;
-    const targets = new Set();
-    for (const r of records) {
-      const t = r.target;
-      if (t && t.nodeType === 1 && hiddenLock.has(t)) targets.add(t);
-    }
-    if (!targets.size) return;
-    hideGuardApplying = true;
-    try {
-      targets.forEach((t) => {
-        if (!t.isConnected) { hiddenLock.delete(t); return; }
-        applyHideStyles(t, hiddenLock.get(t));
-      });
-    } finally {
-      hideGuardApplying = false;
-    }
-  });
-  // 观察 style/class 属性变化；只处理在 hiddenLock 中的元素，其它变化开销极小
-  hideGuardObserver.observe(document.documentElement, {
-    subtree: true,
-    childList: false,
-    attributes: true,
-    attributeFilter: ['style', 'class'],
-  });
+  if (hideGuardSyncTimer) return;
+  hideGuardSyncTimer = setTimeout(() => {
+    hideGuardSyncTimer = null;
+    syncHideGuard();
+  }, 0);
 }
 
 // 深查：document.querySelectorAll 无法穿透 Shadow DOM，很多酒馆脚本(如宝可梦创意工坊)
@@ -322,36 +347,51 @@ function invalidateCache(selector) {
 }
 
 // ---------------------------------------------------------------------------
-// 自动守护：监听 DOM 变化，对被收纳(隐藏/关闭)的悬浮窗自动补回状态。
-// 应对 Vue/React 的 v-if 重建、异步 import 延迟渲染等导致元素被替换的场景。
+// 自动守护：应对 Vue/React 的 v-if 重建、异步 import 延迟渲染等导致元素被整体替换的场景。
+//
+// ⚠ 这里刻意不用 observe(document.body,{childList:true,subtree:true})。
+// 该写法会在酒馆每帧刷新时同步回调，属于典型的"观察整棵 DOM 树"反模式；
+// 安卓低端内核上叠加全文档扫描会持续霸占主线程，最终渲染进程被杀 → 黑屏崩溃。
+// 改用有界低频轮询(参考「🎈悬浮球收纳」的 setInterval + 自动停表)：
+//   · 每个 tick 只是取缓存的元素做 isConnected 校验，命中缓存时开销 O(已收纳数)；
+//   · 没有任何"隐藏/关闭"窗口时自动停表，完全不占 CPU；
+//   · 单个窗口异常被隔离，不会拖垮循环。
 // ---------------------------------------------------------------------------
-let guardObserver = null;
 let guardTimer = null;
+const GUARD_INTERVAL = 1500;
 
 function guardAllWindows() {
+  if (!settings || !Array.isArray(settings.windows)) { stopGuard(); return; }
   let changed = false;
+  let pending = 0;
   for (const w of settings.windows) {
     const state = getWinState(w);
     if (state !== 'hidden' && state !== 'closed') continue;
+    pending++;
     const before = w.missing;
     try { applyWindowState(w, true); } catch (e) { /* 单个窗口异常不影响守护 */ }
     if (before !== w.missing) changed = true;
   }
+  syncHideGuard();
   if (changed) { try { renderList(); } catch (e) {} }
+  if (!pending) stopGuard(); // 无待守护窗口 → 自动停表
+}
+
+function startGuard() {
+  if (guardTimer || typeof setInterval !== 'function') return;
+  guardTimer = setInterval(() => {
+    try { guardAllWindows(); } catch (e) { stopGuard(); }
+  }, GUARD_INTERVAL);
+}
+
+function stopGuard() {
+  if (!guardTimer) return;
+  clearInterval(guardTimer);
+  guardTimer = null;
 }
 
 function setupGuard() {
-  if (guardObserver || typeof MutationObserver === 'undefined') return;
-  guardObserver = new MutationObserver(() => {
-    if (guardTimer) return;
-    // 防抖拉长到 1000ms：酒馆 SPA 每帧都在改 DOM，观察整个 body 的 childList 会高频触发。
-    // 250ms 会在安卓弱设备上持续打断主线程、叠加 deepQueryAll 全文档扫描，最终渲染进程被杀(黑屏崩溃)。
-    guardTimer = setTimeout(() => {
-      guardTimer = null;
-      guardAllWindows();
-    }, 1000);
-  });
-  guardObserver.observe(document.body, { childList: true, subtree: true, attributes: false });
+  startGuard();
 }
 
 // ── 三态模型：open(显示可互动) / hidden(隐藏·脚本运行·不可见不可互动) / closed(彻底关闭) ──
@@ -424,6 +464,21 @@ function enterWindow(win) {
       trigger.click();
       shortToast(`已展开「${win.name}」的内容面板`);
     }
+    return;
+  }
+
+  // 合成事件在安卓旧内核/云端酒馆里偶发被吞掉，表现为"点了但没反应"。
+  // 仅当悬浮球显式声明 aria-expanded(唯一能明确区分"确实没展开"与"该脚本不适用此信号"的标记)
+  // 时才补一次原生 .click()。若无法判定就绝不多点，避免把已经打开的面板又切回去(闪一下就没)。
+  const aria = trigger.getAttribute && trigger.getAttribute('aria-expanded');
+  if (aria !== null && aria !== undefined && aria !== '' && String(aria).toLowerCase() !== 'true') {
+    setTimeout(() => {
+      try {
+        const now = trigger.getAttribute && trigger.getAttribute('aria-expanded');
+        if (String(now).toLowerCase() === 'true') return; // 已经展开了，不再补点
+        if (typeof trigger.click === 'function') trigger.click();
+      } catch (e) { /* 补点失败不影响主流程 */ }
+    }, 80);
   }
 }
 

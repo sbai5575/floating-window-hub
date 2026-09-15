@@ -6,7 +6,7 @@
   "js": "index.js",
   "css": "style.css",
   "author": "Tavern User",
-  "version": "1.24.0",
+  "version": "1.25.0",
   "homePage": "https://github.com/sbai5575/floating-window-hub",
   "auto_update": true,
   "minimum_client_version": "1.12.0"
