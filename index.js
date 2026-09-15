@@ -565,17 +565,21 @@ function scanCandidates() {
   return uniq.slice(0, 12);
 }
 
-// 生成一个尽量稳定的选择器
+// 生成一个尽量稳定的选择器。CSS.escape 在极旧 WebView(Chrome<46)缺失，提供回退避免扫描抛错。
+function cssEscape(s) {
+  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(s);
+  return String(s).replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+}
 function buildSelector(node) {
   if (node.id) {
     // 转义以确保安全
-    const safe = CSS.escape(node.id);
+    const safe = cssEscape(node.id);
     return `#${safe}`;
   }
   for (const cls of node.classList) {
     // 跳过易变的动态类
     if (/^(js-|v-|_|\d|active|open|show|hidden)/i.test(cls)) continue;
-    return `${node.tagName.toLowerCase()}.${CSS.escape(cls)}`;
+    return `${node.tagName.toLowerCase()}.${cssEscape(cls)}`;
   }
   return node.tagName.toLowerCase();
 }
