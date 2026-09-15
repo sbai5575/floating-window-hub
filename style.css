@@ -66,11 +66,13 @@
   z-index: 2147480000;
   background: rgba(0, 0, 0, 0.35);
   opacity: 0;
+  visibility: hidden;   /* 默认彻底隐藏。移动端 WebView 对 opacity:0 的全屏 fixed 层仍可能参与合成导致黑屏 */
   pointer-events: none;
-  transition: opacity 0.35s ease;
+  transition: opacity 0.35s ease, visibility 0.35s;
 }
 .fwh-overlay.show {
   opacity: 1;
+  visibility: visible;
   pointer-events: auto;
 }
 

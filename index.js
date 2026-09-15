@@ -1652,24 +1652,33 @@ function setupKeepAlive() {
 (function run() {
   // 等待 DOM ready
   const start = () => {
-    loadSettings();
-    buildDOM();
-    refreshMeta();
-    // 初始应用各悬浮窗状态(选项 keepPosition 控制是否应用)
-    if (!settings.options.keepPosition) {
-      settings.windows.forEach((w) => (w.enabled = false));
-      saveSettings();
+    try {
+      loadSettings();
+      buildDOM();
+      refreshMeta();
+      // 初始应用各悬浮窗状态(选项 keepPosition 控制是否应用)
+      if (!settings.options.keepPosition) {
+        settings.windows.forEach((w) => (w.enabled = false));
+        saveSettings();
+      }
+      settings.windows.forEach((w) => applyWindowState(w));
+      setupGuard();
+      setupRestore();
+      setupKeepAlive();
+    } catch (err) {
+      // 任何初始化异常都不能拖垮宿主页面渲染（早期 WebView 会因未捕获异常黑屏）
+      if (typeof console !== 'undefined' && console.error) console.error('[FWH] init error:', err);
     }
-    settings.windows.forEach((w) => applyWindowState(w));
-    setupGuard();
-    setupRestore();
-    setupKeepAlive();
   };
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', start, { once: true });
-  } else {
-    start();
+  try {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', start, { once: true });
+    } else {
+      start();
+    }
+  } catch (err) {
+    if (typeof console !== 'undefined' && console.error) console.error('[FWH] boot error:', err);
   }
 })();
 
