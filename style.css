@@ -93,7 +93,7 @@
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
-  transition: transform 0.18s ease, opacity 0.3s ease, scale 0.18s ease;
+  transition: transform 0.18s ease, opacity 0.3s ease;
 }
 .fwh-bubble::after {
   content: '';
@@ -114,7 +114,7 @@
 }
 .fwh-bubble.dragging {
   cursor: grabbing;
-  scale: 1.12;
+  transform: scale(1.12);
   transition: transform 0.1s ease;
 }
 .fwh-bubble-ic {
@@ -142,7 +142,7 @@
 /* 最小化(隐藏)状态：缩成小点，避免误触 */
 .fwh-bubble.fwh-bubble-min {
   opacity: 0;
-  scale: 0.4;
+  transform: scale(0.4);
   pointer-events: none;
 }
 
@@ -166,10 +166,8 @@
   max-height: min(760px, calc(100dvh - 32px));
   display: flex;
   flex-direction: column;
-  /* 先用不透明底色打底再叠加主题色：酒馆的 SmartThemeBlurTintColor 可能是全透明的模糊色，
-     单独使用会让本插件的浮层变成一层「透明界面」，让人误以为面板没打开。 */
+  /* 稳定不透明深底：不依赖酒馆的半透明模糊色(可能是全透明导致「透明界面」)，避免移动端黑屏 */
   background-color: #1b2134;
-  background-image: linear-gradient(var(--fwh-bg), var(--fwh-bg));
   color: var(--fwh-fg);
   border-radius: var(--fwh-radius);
   border: 1px solid var(--fwh-line);
@@ -350,6 +348,8 @@
   margin-top: 6px;
   line-height: 1.5;
   max-width: 260px;
+  margin-left: auto;
+  margin-right: auto;
   margin-inline: auto;
 }
 
@@ -662,10 +662,8 @@
   max-height: min(520px, calc(100dvh - 40px));
   display: flex;
   flex-direction: column;
-  /* 先用不透明底色打底再叠加主题色：酒馆的 SmartThemeBlurTintColor 可能是全透明的模糊色，
-     单独使用会让本插件的浮层变成一层「透明界面」，让人误以为面板没打开。 */
+  /* 稳定不透明深底：不依赖酒馆的半透明模糊色(可能是全透明导致「透明界面」)，避免移动端黑屏 */
   background-color: #1b2134;
-  background-image: linear-gradient(var(--fwh-bg), var(--fwh-bg));
   border: 1px solid var(--fwh-line);
   border-radius: var(--fwh-radius);
   color: var(--fwh-fg);
@@ -757,10 +755,8 @@
   max-width: calc(100vw - 40px);
   padding: 20px;
   border-radius: 18px;
-  /* 先用不透明底色打底再叠加主题色：酒馆的 SmartThemeBlurTintColor 可能是全透明的模糊色，
-     单独使用会让本插件的浮层变成一层「透明界面」，让人误以为面板没打开。 */
+  /* 稳定不透明深底：不依赖酒馆的半透明模糊色(可能是全透明导致「透明界面」)，避免移动端黑屏 */
   background-color: #1b2134;
-  background-image: linear-gradient(var(--fwh-bg), var(--fwh-bg));
   border: 1px solid var(--fwh-line);
   box-shadow: var(--fwh-shadow);
   color: var(--fwh-fg);
@@ -823,10 +819,8 @@
   width: 160px;
   padding: 6px;
   border-radius: 13px;
-  /* 先用不透明底色打底再叠加主题色：酒馆的 SmartThemeBlurTintColor 可能是全透明的模糊色，
-     单独使用会让本插件的浮层变成一层「透明界面」，让人误以为面板没打开。 */
+  /* 稳定不透明深底：不依赖酒馆的半透明模糊色(可能是全透明导致「透明界面」)，避免移动端黑屏 */
   background-color: #1b2134;
-  background-image: linear-gradient(var(--fwh-bg), var(--fwh-bg));
   border: 1px solid var(--fwh-line);
   box-shadow: var(--fwh-shadow);
   color: var(--fwh-fg);
