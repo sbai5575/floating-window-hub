@@ -14,7 +14,7 @@
 const EXT_NAME = '悬浮窗管理中心';
 const LS_KEY = 'fwh_state_v1';
 // 每次修改默认行为/存储结构时递增，用于识别旧 localStorage 残留并做兼容修正
-const VERSION = '1.14.0';
+const VERSION = '1.22.0';
 
 // ---------------------------------------------------------------------------
 // 默认设置
@@ -93,6 +93,16 @@ function loadSettings() {
   }
   if (src) {
     settings.windows = Array.isArray(src.windows) ? src.windows : [];
+    // 迁移：早期版本的「扫描」会把本插件自己的浮层(如 #fwh-overlay)误认成第三方悬浮窗收纳进来。
+    // 之后守护逻辑每隔约 250ms 会把这些浮层重新隐藏(display:none/visibility:hidden !important)，
+    // 表现为「点击悬浮球后弹出透明界面，一秒内又消失」。这里直接剔除一切指向本插件自身的选择器。
+    const before = settings.windows.length;
+    settings.windows = settings.windows.filter(
+      (w) => !(w && typeof w.selector === 'string' && /fwh-/i.test(w.selector)),
+    );
+    if (before !== settings.windows.length) {
+      FWH_DEBUG && console.warn(`[FWH] 已剔除 ${before - settings.windows.length} 条误收纳的本插件自身元素`);
+    }
     settings.bubble = Object.assign({}, DEFAULTS.bubble, src.bubble || {});
     settings.panel = Object.assign({}, DEFAULTS.panel, src.panel || {});
     settings.options = Object.assign({}, DEFAULTS.options, src.options || {});
@@ -522,7 +532,11 @@ function scanCandidates() {
   const seen = new Set();
 
   for (const node of all) {
+    // 跳过本插件自身的一切元素(根节点带 fwh-root，后代用 closest 一并排除)。
+    // 否则遮罩(#fwh-overlay)、快捷菜单等会被当成第三方悬浮窗收纳，进而被守护逻辑反复隐藏，
+    // 造成「点击悬浮球后弹出透明界面又消失」以及整页黑屏。
     if (node.classList.contains('fwh-root')) continue;
+    if (node.closest && node.closest('.fwh-root')) continue;
     if (node.tagName === 'SCRIPT' || node.tagName === 'STYLE' || node.tagName === 'LINK') continue;
     const id = node.id || '';
     const cls = node.className && typeof node.className === 'string' ? node.className : '';
@@ -933,8 +947,13 @@ function applyPanelGeometry() {
     const maxH = Math.max(300, window.innerHeight - 40);
     const w = Math.min(p.w, maxW);
     const h = Math.min(p.h, maxH);
-    panelEl.style.left = p.x + 'px';
-    panelEl.style.top = p.y + 'px';
+    // 位置也必须钳制：换屏幕/换设备后旧坐标可能整块落在可视区之外，
+    // 面板就会完全看不见(只剩遮罩)，表现为「点击后弹出透明界面」。
+    const x = clamp(isFinite(p.x) ? p.x : 0, 0, Math.max(0, window.innerWidth - w));
+    const y = clamp(isFinite(p.y) ? p.y : 0, 0, Math.max(0, window.innerHeight - h));
+    p.x = x; p.y = y;
+    panelEl.style.left = x + 'px';
+    panelEl.style.top = y + 'px';
     panelEl.style.right = '';
     panelEl.style.bottom = '';
     panelEl.style.width = w + 'px';
@@ -951,6 +970,33 @@ function applyPanelGeometry() {
   }
   // PC 端保持原有的 top left 原点(拖动/缩放后动画不偏移)；移动端清空以让 CSS 的 bottom center 生效
   panelEl.style.transformOrigin = isMobileView() ? '' : 'top left';
+}
+
+// 兜底自检：面板打开后若几何异常(尺寸为 0 或整块在可视区外)则重置为默认布局。
+// 防止历史坏坐标/异常样式让面板「看不见但遮罩可见」，用户只会看到一层透明界面。
+function ensurePanelVisible() {
+  if (!panelEl) return;
+  const r = panelEl.getBoundingClientRect();
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const bad =
+    r.width < 60 || r.height < 60 ||
+    r.right < 60 || r.bottom < 60 ||
+    r.left > vw - 60 || r.top > vh - 60;
+  if (!bad) return;
+  FWH_DEBUG && console.warn('[FWH] 面板几何异常，已重置为默认布局', r.width, r.height, r.left, r.top);
+  settings.panel.positioned = false;
+  settings.panel.x = 0;
+  settings.panel.y = 0;
+  panelEl.style.left = '';
+  panelEl.style.top = '';
+  panelEl.style.right = '';
+  panelEl.style.bottom = '';
+  panelEl.style.width = '';
+  panelEl.style.height = '';
+  panelEl.style.maxHeight = '';
+  panelEl.style.transformOrigin = isMobileView() ? '' : 'top left';
+  saveSettings();
 }
 
 // ── 面板：拖动头部移动 ──────────────────────────────────────────
@@ -1213,6 +1259,7 @@ function openPanel() {
   if (settings.options.bubbleAutoHide) {
     bubbleEl.classList.add('fwh-bubble-min');
   }
+  ensurePanelVisible();
 }
 
 function closePanel() {
@@ -1304,7 +1351,8 @@ function shortToast(msg) {
 // ---------------------------------------------------------------------------
 function buildDOM() {
   // 遮罩
-  const overlay = el('div', { class: 'fwh-overlay', id: 'fwh-overlay' });
+  // 必须带 fwh-root 标记：否则扫描/收纳逻辑会把本插件自己的遮罩认成第三方悬浮窗并把它隐藏掉
+  const overlay = el('div', { class: 'fwh-root fwh-overlay', id: 'fwh-overlay' });
 
   // 悬浮球
   bubbleEl = el('div', { class: 'fwh-root fwh-bubble', id: 'fwh-bubble' }, [
@@ -1404,7 +1452,7 @@ function buildDOM() {
   panelEl.append(header, tabs, body, resizeHandle);
 
   // 扫描结果浮层
-  const scanLayer = el('div', { class: 'fwh-scan', id: 'fwh-scan' }, [
+  const scanLayer = el('div', { class: 'fwh-root fwh-scan', id: 'fwh-scan' }, [
     el('div', { class: 'fwh-scan-head' }, [
       el('div', {}, ['扫描结果']),
       el('button', { class: 'fwh-mini', id: 'scan-close' }, ['✕']),
@@ -1413,7 +1461,7 @@ function buildDOM() {
   ]);
 
   // 编辑对话框
-  const dialogWrap = el('div', { class: 'fwh-dialog-wrap', id: 'fwh-dialog-wrap' }, [
+  const dialogWrap = el('div', { class: 'fwh-root fwh-dialog-wrap', id: 'fwh-dialog-wrap' }, [
     el('div', { class: 'fwh-dialog' }, [
       el('div', { class: 'di-title' }, ['添加悬浮窗']),
       el('label', { class: 'di-label' }, ['名称']),
@@ -1434,7 +1482,7 @@ function buildDOM() {
   ]);
 
   // 快捷菜单
-  const quickMenu = el('div', { class: 'fwh-quickmenu', id: 'fwh-quickmenu' }, [
+  const quickMenu = el('div', { class: 'fwh-root fwh-quickmenu', id: 'fwh-quickmenu' }, [
     el('button', { class: 'qm-item', 'data-q': 'allon' }, ['👁 全部显示']),
     el('button', { class: 'qm-item', 'data-q': 'alloff' }, ['🙈 全部隐藏']),
     el('button', { class: 'qm-item', 'data-q': 'hide' }, ['📴 隐藏悬浮球']),
@@ -1539,7 +1587,8 @@ function bindEvents() {
   document.addEventListener('pointerdown', (e) => {
     if (!isPanelOpen) return;
     const t = e.target;
-    if (t && t.closest && (t.closest('.fwh-panel') || t.closest('.fwh-bubble') || t.closest('#fwh-quickmenu'))) return;
+    if (t && t.closest && (t.closest('.fwh-panel') || t.closest('.fwh-bubble') || t.closest('#fwh-quickmenu') ||
+        t.closest('.fwh-scan') || t.closest('.fwh-dialog-wrap') || t.closest('.fwh-toast'))) return;
     FWH_DEBUG && console.log('[FWH] 面板外 pointerdown 触发 closePanel', t && t.tagName, t && t.className);
     closePanel();
   });

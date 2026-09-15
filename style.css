@@ -166,7 +166,10 @@
   max-height: min(760px, calc(100dvh - 32px));
   display: flex;
   flex-direction: column;
-  background: var(--fwh-bg);
+  /* 先用不透明底色打底再叠加主题色：酒馆的 SmartThemeBlurTintColor 可能是全透明的模糊色，
+     单独使用会让本插件的浮层变成一层「透明界面」，让人误以为面板没打开。 */
+  background-color: #1b2134;
+  background-image: linear-gradient(var(--fwh-bg), var(--fwh-bg));
   color: var(--fwh-fg);
   border-radius: var(--fwh-radius);
   border: 1px solid var(--fwh-line);
@@ -659,7 +662,10 @@
   max-height: min(520px, calc(100dvh - 40px));
   display: flex;
   flex-direction: column;
-  background: var(--fwh-bg);
+  /* 先用不透明底色打底再叠加主题色：酒馆的 SmartThemeBlurTintColor 可能是全透明的模糊色，
+     单独使用会让本插件的浮层变成一层「透明界面」，让人误以为面板没打开。 */
+  background-color: #1b2134;
+  background-image: linear-gradient(var(--fwh-bg), var(--fwh-bg));
   border: 1px solid var(--fwh-line);
   border-radius: var(--fwh-radius);
   color: var(--fwh-fg);
@@ -751,7 +757,10 @@
   max-width: calc(100vw - 40px);
   padding: 20px;
   border-radius: 18px;
-  background: var(--fwh-bg);
+  /* 先用不透明底色打底再叠加主题色：酒馆的 SmartThemeBlurTintColor 可能是全透明的模糊色，
+     单独使用会让本插件的浮层变成一层「透明界面」，让人误以为面板没打开。 */
+  background-color: #1b2134;
+  background-image: linear-gradient(var(--fwh-bg), var(--fwh-bg));
   border: 1px solid var(--fwh-line);
   box-shadow: var(--fwh-shadow);
   color: var(--fwh-fg);
@@ -814,7 +823,10 @@
   width: 160px;
   padding: 6px;
   border-radius: 13px;
-  background: var(--fwh-bg);
+  /* 先用不透明底色打底再叠加主题色：酒馆的 SmartThemeBlurTintColor 可能是全透明的模糊色，
+     单独使用会让本插件的浮层变成一层「透明界面」，让人误以为面板没打开。 */
+  background-color: #1b2134;
+  background-image: linear-gradient(var(--fwh-bg), var(--fwh-bg));
   border: 1px solid var(--fwh-line);
   box-shadow: var(--fwh-shadow);
   color: var(--fwh-fg);
