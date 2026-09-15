@@ -14,7 +14,7 @@
 const EXT_NAME = '悬浮窗管理中心';
 const LS_KEY = 'fwh_state_v1';
 // 每次修改默认行为/存储结构时递增，用于识别旧 localStorage 残留并做兼容修正
-const VERSION = '1.23.0';
+const VERSION = '1.24.0';
 
 // ---------------------------------------------------------------------------
 // 默认设置
@@ -65,7 +65,7 @@ let rootNodes = []; // buildDOM 追加到 body 的根节点，用于被 SPA 清�
 let isPanelOpen = false;
 let panelOpenedAt = 0; // 面板最近一次打开的时刻，用于拦截同一手势派生的冗余关闭
 let toggleLockUntil = 0; // 面板切换防抖锁：250ms 内忽略任何二次 toggle，根治「一闪一闪」连闪
-const FWH_DEBUG = true; // 诊断日志开关；定位云端/移动端连闪问题后可将最后一行日志关掉重发
+const FWH_DEBUG = false; // 诊断日志开关；安卓旧 WebView 里 console.log 开销大，默认关闭避免拖垮渲染进程
 // 记录被"进入/呼出"的第三方悬浮窗的原样式，便于隐藏/还原时恢复
 const winOverrides = new Map();
 const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
@@ -266,26 +266,29 @@ function deepQueryAll(selector, root) {
       if (!seen.has(n)) { seen.add(n); out.push(n); }
     });
   };
-  const walk = (r) => {
+  const walk = (r, depth) => {
+    if (depth > 12) return; // 限制 Shadow DOM 嵌套深度，防极端页面递归栈溢出导致崩溃
     collect(r);
     let hosts;
     try { hosts = r.querySelectorAll('*'); } catch (e) { hosts = []; }
     hosts.forEach((h) => {
-      if (h.shadowRoot) walk(h.shadowRoot);
+      if (h.shadowRoot) walk(h.shadowRoot, depth + 1);
     });
   };
-  walk(base);
+  walk(base, 0);
   return out;
 }
 
 // 深度遍历某个元素及其 shadow DOM 内所有后代(用于扫描按钮/图标/触发入口)
-function deepWalk(root, visit) {
+function deepWalk(root, visit, _depth) {
   if (!root) return;
+  const depth = _depth || 0;
+  if (depth > 60) return; // 限制递归深度，防极端页面 DOM 树过深导致栈溢出崩溃
   visit(root);
   const next = [];
   if (root.children) for (const c of root.children) next.push(c);
   if (root.shadowRoot && root.shadowRoot.children) for (const c of root.shadowRoot.children) next.push(c);
-  next.forEach((c) => deepWalk(c, visit));
+  next.forEach((c) => deepWalk(c, visit, depth + 1));
 }
 
 function getTargets(selector) {
@@ -331,20 +334,22 @@ function guardAllWindows() {
     const state = getWinState(w);
     if (state !== 'hidden' && state !== 'closed') continue;
     const before = w.missing;
-    applyWindowState(w, true);
+    try { applyWindowState(w, true); } catch (e) { /* 单个窗口异常不影响守护 */ }
     if (before !== w.missing) changed = true;
   }
-  if (changed) renderList();
+  if (changed) { try { renderList(); } catch (e) {} }
 }
 
 function setupGuard() {
   if (guardObserver || typeof MutationObserver === 'undefined') return;
   guardObserver = new MutationObserver(() => {
     if (guardTimer) return;
+    // 防抖拉长到 1000ms：酒馆 SPA 每帧都在改 DOM，观察整个 body 的 childList 会高频触发。
+    // 250ms 会在安卓弱设备上持续打断主线程、叠加 deepQueryAll 全文档扫描，最终渲染进程被杀(黑屏崩溃)。
     guardTimer = setTimeout(() => {
       guardTimer = null;
       guardAllWindows();
-    }, 250);
+    }, 1000);
   });
   guardObserver.observe(document.body, { childList: true, subtree: true, attributes: false });
 }
