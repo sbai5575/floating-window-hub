@@ -64,6 +64,8 @@ let panelEl, bubbleEl, listEl, listMetaEl;
 let rootNodes = []; // buildDOM 追加到 body 的根节点，用于被 SPA 清空后自动重新挂载
 let isPanelOpen = false;
 let panelOpenedAt = 0; // 面板最近一次打开的时刻，用于拦截同一手势派生的冗余关闭
+let toggleLockUntil = 0; // 面板切换防抖锁：250ms 内忽略任何二次 toggle，根治「一闪一闪」连闪
+const FWH_DEBUG = true; // 诊断日志开关；定位云端/移动端连闪问题后可将最后一行日志关掉重发
 // 记录被"进入/呼出"的第三方悬浮窗的原样式，便于隐藏/还原时恢复
 const winOverrides = new Map();
 const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
@@ -1135,6 +1137,7 @@ function setupDrag() {
     // 轻触未拖动 → 直接切换面板(移动端 WebView 常不派发 click，这里兜底)
     if (!moved) {
       lastTapAt = Date.now();
+      FWH_DEBUG && console.log('[FWH] onEnd(pointer/touch) 触发 toggle @' + lastTapAt);
       togglePanel();
     }
   };
@@ -1159,6 +1162,7 @@ function setupDrag() {
     if (moved) return;                        // 拖拽后不触发
     if (Date.now() - lastTapAt < 800) return; // 已被 pointer/touch 处理过
     lastTapAt = Date.now();                   // 自守卫：移动端 click 可能重复派发，防止 open↔close 连闪
+    FWH_DEBUG && console.log('[FWH] click 兜底触发 toggle @' + lastTapAt);
     togglePanel();
   });
 
@@ -1182,6 +1186,9 @@ function openQuickMenu(x, y) {
 // 面板开关 + 动画
 // ---------------------------------------------------------------------------
 function togglePanel() {
+  const now = Date.now();
+  if (now < toggleLockUntil) { FWH_DEBUG && console.log('[FWH] toggle防抖忽略 @' + now); return; }
+  toggleLockUntil = now + 250;
   isPanelOpen ? closePanel() : openPanel();
 }
 
@@ -1189,6 +1196,7 @@ function openPanel() {
   if (isPanelOpen) return;
   isPanelOpen = true;
   panelOpenedAt = Date.now();
+  FWH_DEBUG && console.log('[FWH] openPanel 触发 @' + panelOpenedAt);
   applyPanelGeometry(); // 恢复用户保存的位置/大小
   refreshMeta();
   renderList();
@@ -1211,7 +1219,11 @@ function closePanel() {
   if (!isPanelOpen) return;
   // 移动端同一手势可能派生多次合成 click/pointer 事件，导致「打开后立刻被关掉」的闪烁。
   // 打开后 350ms 内的关闭请求视为误触，直接忽略。
-  if (Date.now() - panelOpenedAt < 350) return;
+  if (Date.now() - panelOpenedAt < 350) {
+    FWH_DEBUG && console.log('[FWH] closePanel 被350ms守卫忽略 @' + Date.now());
+    return;
+  }
+  FWH_DEBUG && console.log('[FWH] closePanel 触发 @' + Date.now());
   isPanelOpen = false;
   document.getElementById('fwh-overlay').classList.remove('show');
   panelEl.classList.remove('open');
@@ -1528,6 +1540,7 @@ function bindEvents() {
     if (!isPanelOpen) return;
     const t = e.target;
     if (t && t.closest && (t.closest('.fwh-panel') || t.closest('.fwh-bubble') || t.closest('#fwh-quickmenu'))) return;
+    FWH_DEBUG && console.log('[FWH] 面板外 pointerdown 触发 closePanel', t && t.tagName, t && t.className);
     closePanel();
   });
 
